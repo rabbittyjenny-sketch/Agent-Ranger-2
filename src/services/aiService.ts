@@ -128,20 +128,33 @@ class AIService {
     console.log('[AIService] Routed to agent:', agent.name);
 
     // 3. CHECK READINESS (Step 3)
+    // When user force-selects an agent (forceAgent), we skip hard blocking and
+    // only show a soft advisory — the agent still runs and responds.
+    // Hard blocking only applies to auto-routed requests without forceAgent.
     const readiness = orchestratorEngine.checkReadiness(agent.id);
+    let workflowAdvisory = '';
     if (!readiness.isReady) {
-      const missing = readiness.missingDependencies.join(', ');
-      const response: AIResponse = {
-        agentId: 'orchestrator',
-        agentName: 'Orchestrator',
-        cluster: 'strategy',
-        content: `⚠️ ยังไม่สามารถเริ่มงาน "${agent.name}" ได้ เนื่องจากขาดข้อมูลจาก: ${missing}\nกรุณาสั่งให้ระบุข้อมูลดังกล่าว หรือสลับไปใช้ Agent ที่เกี่ยวข้องก่อนค่ะ`,
-        rawOutput: 'Dependency check failed',
-        factCheckResult: { valid: false, violations: [missing], warnings: [], recommendations: [`Run ${missing} first`] },
-        confidence: 0,
-        timestamp: new Date().toISOString()
-      };
-      return response;
+      if (request.forceAgent) {
+        // Soft warning: note recommended predecessors but proceed anyway
+        const missing = readiness.missingDependencies.join(', ');
+        workflowAdvisory = `\n\n---\n💡 **เคล็ดลับ:** สำหรับผลลัพธ์ที่ดีที่สุด แนะนำให้คุยกับ **${missing}** ก่อน เพื่อให้ฉันมีข้อมูลบริบทที่ครบถ้วน — แต่ฉันจะช่วยคุณได้เลยค่ะ!`;
+        // Mark implied predecessors as completed so we don't block further
+        readiness.missingDependencies.forEach(depId => orchestratorEngine.markAgentCompleted(depId));
+      } else {
+        // Auto-routed without forceAgent: hard block
+        const missing = readiness.missingDependencies.join(', ');
+        const response: AIResponse = {
+          agentId: 'orchestrator',
+          agentName: 'Orchestrator',
+          cluster: 'strategy',
+          content: `⚠️ ยังไม่สามารถเริ่มงาน "${agent.name}" ได้ เนื่องจากขาดข้อมูลจาก: ${missing}\nกรุณาสลับไปใช้ Ranger ที่เกี่ยวข้องก่อนค่ะ`,
+          rawOutput: 'Dependency check failed',
+          factCheckResult: { valid: false, violations: [missing], warnings: [], recommendations: [`Run ${missing} first`] },
+          confidence: 0,
+          timestamp: new Date().toISOString()
+        };
+        return response;
+      }
     }
 
     // Fetch database context
@@ -195,7 +208,7 @@ class AIService {
       agentId: agent.id,
       agentName: agent.name,
       cluster: agent.cluster,
-      content: this.formatResponse(agentResponse, legacyFactCheck),
+      content: this.formatResponse(agentResponse, legacyFactCheck) + workflowAdvisory,
       rawOutput: agentResponse,
       factCheckResult: legacyFactCheck,
       confidence: routingResult.confidence,

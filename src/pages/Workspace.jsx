@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, Send, Paperclip, Mic, Settings, X, AlertCircle,
-  RefreshCw, BookOpen, ChevronRight, Check, MessageSquare
+  BookOpen, ChevronRight, Check, MessageSquare
 } from 'lucide-react';
 import { getAllAgents } from '../data/agents';
 import { aiService } from '../services/aiService';
