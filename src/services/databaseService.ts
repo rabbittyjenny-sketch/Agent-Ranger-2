@@ -1,27 +1,42 @@
-import { MasterContext } from '../data/intelligence';
+import { db } from '../db/client';
+import { brands, messages, swotAnalyses, captions, designAssets, agentLearnings, campaignSchedules } from '../db/schema';
+import { eq, desc } from 'drizzle-orm';
 
 /**
- * Database Service - Handles all database operations
- * This service acts as a bridge between the app and Drizzle ORM
- * For now, it uses localStorage as fallback, but will use real database once Neon is set up
+ * Database Service — Neon PostgreSQL via @neondatabase/serverless HTTP driver
+ * Falls back to localStorage when DATABASE_URL is not set
  */
 
-// Type definitions for database operations
 export interface BrandRecord {
   id?: number;
+  // Bucket 1: Strategy
   brandNameEn: string;
   brandNameTh: string;
   industry: string;
-  coreUsp: string;
-  targetAudience?: string;
+  businessModel?: string;
+  coreUsp: string | string[];
+  competitors?: string[];
+  taxId?: string;
+  companyAddress?: string;
+  // Bucket 2: Creative / Visual
   primaryColor?: string;
   secondaryColor?: string;
-  fontFamily?: string;
+  secondaryColors?: string[];
+  fontFamily?: string | string[];
   moodKeywords?: string[];
-  toneOfVoice?: string;
-  multilingualLevel?: string;
-  brandHashtags?: string[];
+  videoStyle?: string;
+  forbiddenElements?: string[];
   logoUrl?: string;
+  // Bucket 3: Agency / Communication
+  toneOfVoice?: string;
+  targetAudience?: string;
+  targetPersona?: string;
+  painPoints?: string[];
+  multilingualLevel?: string;
+  forbiddenWords?: string[];
+  brandHashtags?: string[];
+  automationEmail?: string;
+  automationLineOa?: string;
 }
 
 export interface SwotRecord {
@@ -104,253 +119,323 @@ export interface CampaignRecord {
 }
 
 class DatabaseService {
-  private isReady = false;
-  private localStoragePrefix = 'socialFactory_db_';
+  private readonly localStoragePrefix = 'socialFactory_db_';
 
-  constructor() {
-    this.initialize();
+  /** True only if @neondatabase/serverless client was initialised */
+  get isReady(): boolean {
+    return db !== null;
   }
 
-  private initialize() {
-    // Check if we can connect to the database
-    const dbUrl = (import.meta as any).env?.VITE_DATABASE_URL || '';
+  // ── helpers ──────────────────────────────────────────────────────────────
 
-    if (!dbUrl) {
-      console.warn('⚠️  DATABASE_URL not configured. Using localStorage as fallback.');
-      this.isReady = false;
-    } else {
-      console.log('✅ Database service initialized with Neon PostgreSQL');
-      this.isReady = true;
-    }
+  private lsSet(key: string, value: any) {
+    try { localStorage.setItem(`${this.localStoragePrefix}${key}`, JSON.stringify(value)); } catch {}
   }
 
-  /**
-   * Create or update a brand
-   */
+  private lsGet<T>(key: string): T | null {
+    try {
+      const raw = localStorage.getItem(`${this.localStoragePrefix}${key}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  // ── saveBrand ─────────────────────────────────────────────────────────────
+
   async saveBrand(brand: BrandRecord): Promise<BrandRecord> {
-    try {
-      if (!this.isReady) {
-        // Fallback to localStorage
-        const key = `${this.localStoragePrefix}brands_${brand.brandNameEn}`;
-        const data = { ...brand, id: 1, createdAt: new Date(), updatedAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
+    if (db) {
+      try {
+        const coreUspArr = Array.isArray(brand.coreUsp)
+          ? brand.coreUsp
+          : brand.coreUsp ? [brand.coreUsp] : [];
+        const fontFamilyArr = Array.isArray(brand.fontFamily)
+          ? brand.fontFamily
+          : brand.fontFamily ? [brand.fontFamily] : [];
+        const [row] = await db.insert(brands).values({
+          brandNameEn: brand.brandNameEn,
+          brandNameTh: brand.brandNameTh,
+          industry: brand.industry,
+          businessModel: brand.businessModel,
+          coreUsp: coreUspArr,
+          competitors: brand.competitors ?? [],
+          taxId: brand.taxId,
+          companyAddress: brand.companyAddress,
+          targetAudience: brand.targetAudience,
+          primaryColor: brand.primaryColor,
+          secondaryColors: brand.secondaryColors ?? [],
+          fontFamily: fontFamilyArr,
+          moodKeywords: brand.moodKeywords ?? [],
+          videoStyle: brand.videoStyle,
+          forbiddenElements: brand.forbiddenElements ?? [],
+          logoUrl: brand.logoUrl,
+          toneOfVoice: brand.toneOfVoice,
+          targetPersona: brand.targetPersona,
+          painPoints: brand.painPoints ?? [],
+          multilingualLevel: brand.multilingualLevel,
+          forbiddenWords: brand.forbiddenWords ?? [],
+          brandHashtags: brand.brandHashtags ?? [],
+          automationEmail: brand.automationEmail,
+          automationLineOa: brand.automationLineOa,
+          updatedAt: new Date(),
+        }).returning();
+        return { ...brand, id: row.id };
+      } catch (err) {
+        console.warn('[DB] saveBrand failed, using localStorage:', err);
       }
-
-      // TODO: Implement actual database save when connected
-      // const result = await db.insert(brands).values(brand).returning();
-      // return result[0];
-
-      // For now, return the brand with a mock ID
-      return { ...brand, id: 1 };
-    } catch (error) {
-      console.error('Error saving brand:', error);
-      throw error;
     }
+    const data = { ...brand, id: 1, createdAt: new Date(), updatedAt: new Date() };
+    this.lsSet(`brands_${brand.brandNameEn}`, data);
+    return data;
   }
 
-  /**
-   * Get brand by ID or name
-   */
+  // ── getBrand ──────────────────────────────────────────────────────────────
+
   async getBrand(identifier: string | number): Promise<BrandRecord | null> {
-    try {
-      if (!this.isReady) {
-        // Fallback to localStorage
-        const key = `${this.localStoragePrefix}brands_${identifier}`;
-        const data = localStorage.getItem(key);
-        return data ? JSON.parse(data) : null;
-      }
-
-      // TODO: Implement actual database query
-      // const result = await db.select().from(brands).where(...);
-      // return result[0] || null;
-
-      return null;
-    } catch (error) {
-      console.error('Error getting brand:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Save SWOT analysis
-   */
-  async saveSwotAnalysis(swot: SwotRecord): Promise<SwotRecord> {
-    try {
-      if (!this.isReady) {
-        const key = `${this.localStoragePrefix}swot_${swot.brandId}_${Date.now()}`;
-        const data = { ...swot, id: Date.now(), createdAt: new Date(), updatedAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
-      }
-
-      // TODO: Implement database insert
-      return swot;
-    } catch (error) {
-      console.error('Error saving SWOT analysis:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Save caption
-   */
-  async saveCaption(caption: CaptionRecord): Promise<CaptionRecord> {
-    try {
-      if (!this.isReady) {
-        const key = `${this.localStoragePrefix}caption_${caption.brandId}_${Date.now()}`;
-        const data = { ...caption, id: Date.now(), createdAt: new Date(), updatedAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
-      }
-
-      // TODO: Implement database insert
-      return caption;
-    } catch (error) {
-      console.error('Error saving caption:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Save design asset
-   */
-  async saveDesignAsset(asset: DesignAssetRecord): Promise<DesignAssetRecord> {
-    try {
-      if (!this.isReady) {
-        const key = `${this.localStoragePrefix}design_${asset.brandId}_${Date.now()}`;
-        const data = { ...asset, id: Date.now(), createdAt: new Date(), updatedAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
-      }
-
-      // TODO: Implement database insert
-      return asset;
-    } catch (error) {
-      console.error('Error saving design asset:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Save message to conversation history
-   */
-  async saveMessage(message: MessageRecord): Promise<MessageRecord> {
-    try {
-      if (!this.isReady) {
-        const key = `${this.localStoragePrefix}message_${message.brandId}_${Date.now()}`;
-        const data = { ...message, id: Date.now(), createdAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
-      }
-
-      // TODO: Implement database insert
-      return message;
-    } catch (error) {
-      console.error('Error saving message:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get conversation history
-   */
-  async getConversationHistory(brandId: number | string, limit: number = 50): Promise<MessageRecord[]> {
-    try {
-      if (!this.isReady) {
-        // Fallback to localStorage - get all messages for this brand
-        const messages: MessageRecord[] = [];
-        const brandIdStr = String(brandId);
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key?.includes(`${this.localStoragePrefix}message_${brandIdStr}`)) {
-            const data = localStorage.getItem(key);
-            if (data) messages.push(JSON.parse(data));
-          }
+    if (db) {
+      try {
+        const rows = typeof identifier === 'number'
+          ? await db.select().from(brands).where(eq(brands.id, identifier)).limit(1)
+          : await db.select().from(brands).where(eq(brands.brandNameEn, String(identifier))).limit(1);
+        if (rows.length > 0) {
+          const r = rows[0];
+          return {
+            id: r.id,
+            brandNameEn: r.brandNameEn,
+            brandNameTh: r.brandNameTh,
+            industry: r.industry,
+            coreUsp: Array.isArray(r.coreUsp) ? (r.coreUsp as string[]).join(', ') : String(r.coreUsp ?? ''),
+            targetAudience: r.targetAudience ?? undefined,
+            primaryColor: r.primaryColor ?? undefined,
+            toneOfVoice: r.toneOfVoice ?? undefined,
+          };
         }
-        return messages.sort((a, b) =>
-          new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
-        ).slice(-limit);
+        return null;
+      } catch (err) {
+        console.warn('[DB] getBrand failed:', err);
       }
-
-      // TODO: Implement database query with limit
-      return [];
-    } catch (error) {
-      console.error('Error getting conversation history:', error);
-      return [];
     }
+    return this.lsGet<BrandRecord>(`brands_${identifier}`);
   }
 
-  /**
-   * Save agent learning
-   */
+  // ── saveMessage ───────────────────────────────────────────────────────────
+
+  async saveMessage(message: MessageRecord): Promise<MessageRecord> {
+    if (db) {
+      try {
+        const [row] = await db.insert(messages).values({
+          brandId: message.brandId,
+          role: message.role,
+          agentId: message.agentId,
+          agentName: message.agentName,
+          content: message.content,
+          attachments: message.attachments ?? [],
+          confidence: message.confidence,
+          validationResults: message.validationResults ?? {},
+        }).returning();
+        return { ...message, id: row.id, createdAt: row.createdAt };
+      } catch (err) {
+        console.warn('[DB] saveMessage failed, using localStorage:', err);
+      }
+    }
+    const data = { ...message, id: Date.now(), createdAt: new Date() };
+    this.lsSet(`message_${message.brandId}_${Date.now()}`, data);
+    return data;
+  }
+
+  // ── getConversationHistory ────────────────────────────────────────────────
+
+  async getConversationHistory(brandId: number | string, limit = 50): Promise<MessageRecord[]> {
+    const bid = typeof brandId === 'number' ? brandId : parseInt(String(brandId)) || 0;
+    if (db && bid > 0) {
+      try {
+        const rows = await db.select().from(messages)
+          .where(eq(messages.brandId, bid))
+          .orderBy(desc(messages.createdAt))
+          .limit(limit);
+        return rows.reverse().map(r => ({
+          id: r.id,
+          brandId: r.brandId,
+          role: r.role as 'user' | 'agent',
+          agentId: r.agentId ?? undefined,
+          agentName: r.agentName ?? undefined,
+          content: r.content,
+          confidence: r.confidence ?? undefined,
+          createdAt: r.createdAt,
+        }));
+      } catch (err) {
+        console.warn('[DB] getConversationHistory failed:', err);
+      }
+    }
+    // localStorage fallback
+    const msgs: MessageRecord[] = [];
+    const prefix = `${this.localStoragePrefix}message_${String(brandId)}`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) {
+        try { const d = localStorage.getItem(key); if (d) msgs.push(JSON.parse(d)); } catch {}
+      }
+    }
+    return msgs
+      .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
+      .slice(-limit);
+  }
+
+  // ── saveSwotAnalysis ──────────────────────────────────────────────────────
+
+  async saveSwotAnalysis(swot: SwotRecord): Promise<SwotRecord> {
+    if (db) {
+      try {
+        const [row] = await db.insert(swotAnalyses).values({
+          brandId: swot.brandId,
+          strengths: swot.strengths,
+          weaknesses: swot.weaknesses,
+          opportunities: swot.opportunities,
+          threats: swot.threats,
+          marketTrends: swot.marketTrends,
+          competitorAnalysis: swot.competitorAnalysis,
+          confidence: swot.confidence,
+          generatedBy: swot.generatedBy,
+          updatedAt: new Date(),
+        }).returning();
+        return { ...swot, id: row.id };
+      } catch (err) {
+        console.warn('[DB] saveSwotAnalysis failed:', err);
+      }
+    }
+    const data = { ...swot, id: Date.now() };
+    this.lsSet(`swot_${swot.brandId}_${Date.now()}`, data);
+    return data;
+  }
+
+  // ── saveCaption ───────────────────────────────────────────────────────────
+
+  async saveCaption(caption: CaptionRecord): Promise<CaptionRecord> {
+    if (db) {
+      try {
+        const [row] = await db.insert(captions).values({
+          brandId: caption.brandId,
+          caption: caption.caption,
+          captionTh: caption.captionTh,
+          platform: caption.platform,
+          contentType: caption.contentType,
+          hashtags: caption.hashtags ?? [],
+          engagementTips: caption.engagementTips,
+          confidence: caption.confidence,
+          generatedBy: caption.generatedBy,
+          updatedAt: new Date(),
+        }).returning();
+        return { ...caption, id: row.id };
+      } catch (err) {
+        console.warn('[DB] saveCaption failed:', err);
+      }
+    }
+    const data = { ...caption, id: Date.now() };
+    this.lsSet(`caption_${caption.brandId}_${Date.now()}`, data);
+    return data;
+  }
+
+  // ── saveDesignAsset ───────────────────────────────────────────────────────
+
+  async saveDesignAsset(asset: DesignAssetRecord): Promise<DesignAssetRecord> {
+    if (db) {
+      try {
+        const [row] = await db.insert(designAssets).values({
+          brandId: asset.brandId,
+          assetType: asset.assetType,
+          assetDescription: asset.assetDescription,
+          colorScheme: asset.colorScheme ?? {},
+          typography: asset.typography ?? {},
+          dimensions: asset.dimensions,
+          imageUrl: asset.imageUrl,
+          cssCode: asset.cssCode,
+          generatedBy: asset.generatedBy,
+          updatedAt: new Date(),
+        }).returning();
+        return { ...asset, id: row.id };
+      } catch (err) {
+        console.warn('[DB] saveDesignAsset failed:', err);
+      }
+    }
+    const data = { ...asset, id: Date.now() };
+    this.lsSet(`design_${asset.brandId}_${Date.now()}`, data);
+    return data;
+  }
+
+  // ── saveAgentLearning ─────────────────────────────────────────────────────
+
   async saveAgentLearning(learning: AgentLearningRecord): Promise<AgentLearningRecord> {
-    try {
-      if (!this.isReady) {
-        const key = `${this.localStoragePrefix}learning_${learning.brandId}_${Date.now()}`;
-        const data = { ...learning, id: Date.now(), createdAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
+    if (db) {
+      try {
+        const [row] = await db.insert(agentLearnings).values({
+          brandId: learning.brandId,
+          agentId: learning.agentId,
+          agentName: learning.agentName,
+          insight: learning.insight,
+          insightType: learning.insightType,
+          dataUsed: learning.dataUsed ?? [],
+          confidence: learning.confidence,
+          actionable: learning.actionable,
+        }).returning();
+        return { ...learning, id: row.id };
+      } catch (err) {
+        console.warn('[DB] saveAgentLearning failed:', err);
       }
-
-      // TODO: Implement database insert
-      return learning;
-    } catch (error) {
-      console.error('Error saving agent learning:', error);
-      throw error;
     }
+    const data = { ...learning, id: Date.now() };
+    this.lsSet(`learning_${learning.brandId}_${Date.now()}`, data);
+    return data;
   }
 
-  /**
-   * Save campaign
-   */
+  // ── saveCampaign ──────────────────────────────────────────────────────────
+
   async saveCampaign(campaign: CampaignRecord): Promise<CampaignRecord> {
-    try {
-      if (!this.isReady) {
-        const key = `${this.localStoragePrefix}campaign_${campaign.brandId}_${Date.now()}`;
-        const data = { ...campaign, id: Date.now(), createdAt: new Date(), updatedAt: new Date() };
-        localStorage.setItem(key, JSON.stringify(data));
-        return data;
+    if (db) {
+      try {
+        const [row] = await db.insert(campaignSchedules).values({
+          brandId: campaign.brandId,
+          campaignName: campaign.campaignName,
+          campaignObjective: campaign.campaignObjective,
+          targetAudience: campaign.targetAudience,
+          platforms: campaign.platforms ?? [],
+          contentCalendar: campaign.contentCalendar ?? {},
+          startDate: campaign.startDate,
+          endDate: campaign.endDate,
+          status: campaign.status,
+          budget: campaign.budget,
+          estimatedReach: campaign.estimatedReach,
+          updatedAt: new Date(),
+        }).returning();
+        return { ...campaign, id: row.id };
+      } catch (err) {
+        console.warn('[DB] saveCampaign failed:', err);
       }
-
-      // TODO: Implement database insert
-      return campaign;
-    } catch (error) {
-      console.error('Error saving campaign:', error);
-      throw error;
     }
+    const data = { ...campaign, id: Date.now() };
+    this.lsSet(`campaign_${campaign.brandId}_${Date.now()}`, data);
+    return data;
   }
 
-  /**
-   * Get database status
-   */
+  // ── status ────────────────────────────────────────────────────────────────
+
   getStatus() {
     return {
       isReady: this.isReady,
-      backend: this.isReady ? 'Neon PostgreSQL' : 'localStorage (fallback)',
+      backend: this.isReady ? 'Neon PostgreSQL (HTTP)' : 'localStorage (fallback)',
       message: this.isReady
         ? '✅ Connected to Neon PostgreSQL'
-        : '⚠️  Using localStorage - configure DATABASE_URL to enable Neon'
+        : '⚠️  Using localStorage — set VITE_DATABASE_URL in .env to enable Neon',
     };
   }
 
-  /**
-   * Clear all localStorage data (for development/testing)
-   */
   clearLocalStorage() {
-    const keys = [];
+    const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(this.localStoragePrefix)) {
-        keys.push(key);
-      }
+      if (key?.startsWith(this.localStoragePrefix)) keys.push(key);
     }
-    keys.forEach(key => localStorage.removeItem(key));
-    console.log(`Cleared ${keys.length} localStorage items`);
+    keys.forEach(k => localStorage.removeItem(k));
+    console.log(`[DB] Cleared ${keys.length} localStorage items`);
   }
 }
 
-// Export singleton instance
 export const databaseService = new DatabaseService();
-
 export default databaseService;
