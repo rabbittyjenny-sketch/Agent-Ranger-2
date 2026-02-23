@@ -9,19 +9,34 @@ import { eq, desc } from 'drizzle-orm';
 
 export interface BrandRecord {
   id?: number;
+  // Bucket 1: Strategy
   brandNameEn: string;
   brandNameTh: string;
   industry: string;
-  coreUsp: string;
-  targetAudience?: string;
+  businessModel?: string;
+  coreUsp: string | string[];
+  competitors?: string[];
+  taxId?: string;
+  companyAddress?: string;
+  // Bucket 2: Creative / Visual
   primaryColor?: string;
   secondaryColor?: string;
-  fontFamily?: string;
+  secondaryColors?: string[];
+  fontFamily?: string | string[];
   moodKeywords?: string[];
-  toneOfVoice?: string;
-  multilingualLevel?: string;
-  brandHashtags?: string[];
+  videoStyle?: string;
+  forbiddenElements?: string[];
   logoUrl?: string;
+  // Bucket 3: Agency / Communication
+  toneOfVoice?: string;
+  targetAudience?: string;
+  targetPersona?: string;
+  painPoints?: string[];
+  multilingualLevel?: string;
+  forbiddenWords?: string[];
+  brandHashtags?: string[];
+  automationEmail?: string;
+  automationLineOa?: string;
 }
 
 export interface SwotRecord {
@@ -129,19 +144,37 @@ class DatabaseService {
   async saveBrand(brand: BrandRecord): Promise<BrandRecord> {
     if (db) {
       try {
+        const coreUspArr = Array.isArray(brand.coreUsp)
+          ? brand.coreUsp
+          : brand.coreUsp ? [brand.coreUsp] : [];
+        const fontFamilyArr = Array.isArray(brand.fontFamily)
+          ? brand.fontFamily
+          : brand.fontFamily ? [brand.fontFamily] : [];
         const [row] = await db.insert(brands).values({
           brandNameEn: brand.brandNameEn,
           brandNameTh: brand.brandNameTh,
           industry: brand.industry,
-          coreUsp: brand.coreUsp ? [brand.coreUsp] : [],
+          businessModel: brand.businessModel,
+          coreUsp: coreUspArr,
+          competitors: brand.competitors ?? [],
+          taxId: brand.taxId,
+          companyAddress: brand.companyAddress,
           targetAudience: brand.targetAudience,
           primaryColor: brand.primaryColor,
-          fontFamily: brand.fontFamily ? [brand.fontFamily] : [],
+          secondaryColors: brand.secondaryColors ?? [],
+          fontFamily: fontFamilyArr,
           moodKeywords: brand.moodKeywords ?? [],
-          toneOfVoice: brand.toneOfVoice,
-          multilingualLevel: brand.multilingualLevel,
-          brandHashtags: brand.brandHashtags ?? [],
+          videoStyle: brand.videoStyle,
+          forbiddenElements: brand.forbiddenElements ?? [],
           logoUrl: brand.logoUrl,
+          toneOfVoice: brand.toneOfVoice,
+          targetPersona: brand.targetPersona,
+          painPoints: brand.painPoints ?? [],
+          multilingualLevel: brand.multilingualLevel,
+          forbiddenWords: brand.forbiddenWords ?? [],
+          brandHashtags: brand.brandHashtags ?? [],
+          automationEmail: brand.automationEmail,
+          automationLineOa: brand.automationLineOa,
           updatedAt: new Date(),
         }).returning();
         return { ...brand, id: row.id };

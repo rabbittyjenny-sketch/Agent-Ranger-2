@@ -33,6 +33,7 @@ export const brands = pgTable('brands', {
   forbiddenWords: jsonb('forbidden_words'), // NEW: Array of words to avoid
   brandHashtags: jsonb('brand_hashtags'), // Array of hashtags
   automationEmail: varchar('automation_email', { length: 255 }), // Email for notifications
+  automationLineOa: varchar('automation_line_oa', { length: 255 }), // LINE OA ID for notifications
 
   // === METADATA ===
   createdAt: timestamp('created_at').defaultNow().notNull(),
