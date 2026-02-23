@@ -1,19 +1,19 @@
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import { neon } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from './schema';
 
-// Get the database URL from environment variables
-const databaseUrl = import.meta.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
+/**
+ * Browser-compatible Neon DB client
+ * Uses @neondatabase/serverless HTTP driver (works in Vite/browser)
+ * Falls back gracefully (db = null) when DATABASE_URL is not configured
+ */
 
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is not set. Please configure your Neon PostgreSQL connection string.');
-}
+const databaseUrl = (import.meta as any).env?.VITE_DATABASE_URL || '';
 
-// Create a postgres client
-const client = postgres(databaseUrl);
+// Create DB instance only when URL is present — no throw on missing URL
+export const db = databaseUrl
+  ? drizzle(neon(databaseUrl), { schema })
+  : null;
 
-// Create and export the database instance
-export const db = drizzle(client, { schema });
-
-// Export schema for type safety
+export type DrizzleDB = NonNullable<typeof db>;
 export * from './schema';
