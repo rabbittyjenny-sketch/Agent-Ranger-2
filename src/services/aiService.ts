@@ -306,8 +306,9 @@ class AIService {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    // Support user-provided API key stored in localStorage (UI settings)
-    const userApiKey = typeof localStorage !== 'undefined' ? localStorage.getItem('socialFactory_anthropicKey') : null;
+    // Support user-provided API key: env var first, then localStorage (UI settings)
+    const userApiKey = (import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined)
+      || (typeof localStorage !== 'undefined' ? localStorage.getItem('socialFactory_anthropicKey') : null);
     const apiUrl = userApiKey ? 'https://api.anthropic.com/v1/messages' : '/api/anthropic/v1/messages';
     const apiHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (userApiKey) {

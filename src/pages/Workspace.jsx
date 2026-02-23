@@ -391,7 +391,10 @@ export const Workspace = ({ masterContext, onContextUpdate, onOpenGuide }) => {
   const [attachments, setAttachments] = useState([]);
   const [previewUrls, setPreviewUrls] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [hasApiKey, setHasApiKey] = useState(() => !!localStorage.getItem('socialFactory_anthropicKey'));
+  const [hasApiKey, setHasApiKey] = useState(() =>
+    !!localStorage.getItem('socialFactory_anthropicKey') ||
+    !!(import.meta.env.VITE_ANTHROPIC_API_KEY)
+  );
 
   const messagesEndRef = useRef(null);
   const recognitionRef = useRef(null);
