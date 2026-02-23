@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles, Send, Paperclip, Mic, Settings, X, AlertCircle,
-  BookOpen, ChevronRight, Check, MessageSquare, KeyRound, Eye, EyeOff,
+  BookOpen, Check, MessageSquare,
   Wand2, Volume2
 } from 'lucide-react';
 import { getAllAgents } from '../data/agents';
@@ -65,124 +65,6 @@ const MarkdownText = ({ text }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // HOISTED COMPONENTS (outside Workspace — prevents input lag on re-render)
 // ══════════════════════════════════════════════════════════════════════════════
-
-// ── API Key Modal (Hoisted) ───────────────────────────────────────────────────
-const ApiKeyModal = ({ onClose }) => {
-  const [anthropicKey, setAnthropicKey] = useState(
-    () => localStorage.getItem('socialFactory_anthropicKey') || ''
-  );
-  const [elevenKey, setElevenKey] = useState(
-    () => localStorage.getItem('socialFactory_elevenKey') || ''
-  );
-  const [showA, setShowA] = useState(false);
-  const [showE, setShowE] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const handleSave = () => {
-    if (anthropicKey.trim()) localStorage.setItem('socialFactory_anthropicKey', anthropicKey.trim());
-    else localStorage.removeItem('socialFactory_anthropicKey');
-    if (elevenKey.trim()) localStorage.setItem('socialFactory_elevenKey', elevenKey.trim());
-    else localStorage.removeItem('socialFactory_elevenKey');
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onClose(); }, 900);
-  };
-
-  const hasAnthropicKey = !!anthropicKey.trim();
-  const inpClass = "w-full bg-[#EFF2F9] outline-none text-sm font-sarabun text-gray-700 placeholder-gray-400 pr-10";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.35)' }}>
-      <motion.div
-        initial={{ scale: 0.92, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.92, opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        className="w-full max-w-sm mx-4 rounded-3xl p-6"
-        style={{ background: '#EFF2F9', ...NEU.raised }}
-      >
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
-            style={{ background: '#EFF2F9', ...NEU.raisedSm }}>
-            <KeyRound className="w-5 h-5" style={{ color: '#5E9BEB' }} />
-          </div>
-          <div className="flex-1">
-            <h3 className="font-bold text-slate-700 text-sm">ตั้งค่า API Keys</h3>
-            <p className="text-xs text-gray-400 font-sarabun">เก็บใน Browser เท่านั้น ไม่ส่งออกไปไหน</p>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-xl text-gray-400 hover:text-gray-600 transition-colors"
-            style={{ background: '#EFF2F9', ...NEU.raisedSm }}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="space-y-4">
-          {/* Anthropic Key */}
-          <div>
-            <div className="flex items-center gap-1.5 mb-2">
-              <label className="text-xs font-semibold text-gray-600">Anthropic API Key</label>
-              <span className="text-xs text-rose-400 font-medium">(จำเป็น)</span>
-              {hasAnthropicKey && <span className="ml-auto text-xs text-emerald-500 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> ตั้งค่าแล้ว</span>}
-            </div>
-            <div className="relative rounded-xl" style={{ ...NEU.inset, background: '#EFF2F9' }}>
-              <input
-                type={showA ? 'text' : 'password'}
-                value={anthropicKey}
-                onChange={e => setAnthropicKey(e.target.value)}
-                className={`${inpClass} px-3 py-2.5 rounded-xl`}
-                placeholder="sk-ant-api03-..."
-              />
-              <button type="button" onClick={() => setShowA(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                {showA ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-gray-400 mt-1.5 font-sarabun">
-              รับได้ที่ <span className="text-blue-400">console.anthropic.com</span>
-            </p>
-          </div>
-
-          {/* ElevenLabs Key */}
-          <div>
-            <div className="flex items-center gap-1.5 mb-2">
-              <label className="text-xs font-semibold text-gray-600">ElevenLabs API Key</label>
-              <span className="text-xs text-gray-400">(ไม่บังคับ — สำหรับอ่านออกเสียง)</span>
-            </div>
-            <div className="relative rounded-xl" style={{ ...NEU.inset, background: '#EFF2F9' }}>
-              <input
-                type={showE ? 'text' : 'password'}
-                value={elevenKey}
-                onChange={e => setElevenKey(e.target.value)}
-                className={`${inpClass} px-3 py-2.5 rounded-xl`}
-                placeholder="sk_..."
-              />
-              <button type="button" onClick={() => setShowE(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                {showE ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-gray-400 mt-1.5 font-sarabun">
-              รับได้ที่ <span className="text-blue-400">elevenlabs.io</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-sarabun text-gray-500 transition-colors"
-            style={{ background: '#EFF2F9', ...NEU.raisedSm }}>
-            ยกเลิก
-          </button>
-          <button onClick={handleSave}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-all"
-            style={{ background: saved ? '#34D399' : '#5E9BEB' }}>
-            {saved ? <><Check className="w-4 h-4" /> บันทึกแล้ว!</> : <><Check className="w-4 h-4" /> บันทึก</>}
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-};
 
 // ── Brand Context Popup (Hoisted) ─────────────────────────────────────────────
 const BrandPopup = ({ masterContext, onSave, onClose }) => {
