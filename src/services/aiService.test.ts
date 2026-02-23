@@ -28,9 +28,9 @@ describe('AIService Workflow Test', () => {
         aiService.clearHistory();
     });
 
-    it('should handle dependency blocking correctly (Step 3)', async () => {
-        // Force readiness check to fail for a specific agent
-        // Visual Strategist depends on Market Analyzer
+    it('should give soft advisory (not hard block) when forceAgent has unmet dependencies (Step 3)', async () => {
+        // Visual Strategist depends on Market Analyzer + Positioning Strategist
+        // With forceAgent set, the agent should still run (soft advisory, not hard block)
         const request = {
             userInput: 'ออกแบบโลโก้ให้หน่อย',
             forceAgent: 'visual-strategist'
@@ -38,9 +38,10 @@ describe('AIService Workflow Test', () => {
 
         const response = await aiService.processMessage(request);
 
-        expect(response.agentId).toBe('orchestrator');
-        expect(response.content).toContain('ยังไม่สามารถเริ่มงาน');
-        expect(response.content).toContain('market-analyzer');
+        // Agent should have actually run (not blocked by orchestrator)
+        expect(response.agentId).toBe('visual-strategist');
+        // Response should include the soft workflow advisory tip
+        expect(response.content).toContain('เคล็ดลับ');
     });
 
     it('should execute full workflow for a ready agent (Step 4, 5, 6)', async () => {
@@ -85,7 +86,7 @@ describe('AIService Workflow Test', () => {
 
         const response = await aiService.processMessage(request);
 
-        expect(response.content).toContain('ระบบใช้โหมดจำลอง');
-        expect(response.content).toContain('การวิเคราะห์ตลาดเบื้องต้น');
+        expect(response.content).toContain('ระบบใช้โหมดออฟไลน์');
+        expect(response.content).toContain('การวิเคราะห์ตลาดสำหรับ');
     });
 });

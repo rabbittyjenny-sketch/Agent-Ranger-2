@@ -32,6 +32,8 @@ export interface MessageRequest {
 class AIService {
   private conversationHistory: AIResponse[] = [];
   private masterContext: MasterContext | null = null;
+  // Per-agent conversation history for multi-turn context
+  private chatHistories: Map<string, Array<{ role: 'user' | 'assistant'; content: string }>> = new Map();
 
   /**
    * Initialize service with brand context
@@ -126,20 +128,33 @@ class AIService {
     console.log('[AIService] Routed to agent:', agent.name);
 
     // 3. CHECK READINESS (Step 3)
+    // When user force-selects an agent (forceAgent), we skip hard blocking and
+    // only show a soft advisory — the agent still runs and responds.
+    // Hard blocking only applies to auto-routed requests without forceAgent.
     const readiness = orchestratorEngine.checkReadiness(agent.id);
+    let workflowAdvisory = '';
     if (!readiness.isReady) {
-      const missing = readiness.missingDependencies.join(', ');
-      const response: AIResponse = {
-        agentId: 'orchestrator',
-        agentName: 'Orchestrator',
-        cluster: 'strategy',
-        content: `⚠️ ยังไม่สามารถเริ่มงาน "${agent.name}" ได้ เนื่องจากขาดข้อมูลจาก: ${missing}\nกรุณาสั่งให้ระบุข้อมูลดังกล่าว หรือสลับไปใช้ Agent ที่เกี่ยวข้องก่อนค่ะ`,
-        rawOutput: 'Dependency check failed',
-        factCheckResult: { valid: false, violations: [missing], warnings: [], recommendations: [`Run ${missing} first`] },
-        confidence: 0,
-        timestamp: new Date().toISOString()
-      };
-      return response;
+      if (request.forceAgent) {
+        // Soft warning: note recommended predecessors but proceed anyway
+        const missing = readiness.missingDependencies.join(', ');
+        workflowAdvisory = `\n\n---\n💡 **เคล็ดลับ:** สำหรับผลลัพธ์ที่ดีที่สุด แนะนำให้คุยกับ **${missing}** ก่อน เพื่อให้ฉันมีข้อมูลบริบทที่ครบถ้วน — แต่ฉันจะช่วยคุณได้เลยค่ะ!`;
+        // Mark implied predecessors as completed so we don't block further
+        readiness.missingDependencies.forEach(depId => orchestratorEngine.markAgentCompleted(depId));
+      } else {
+        // Auto-routed without forceAgent: hard block
+        const missing = readiness.missingDependencies.join(', ');
+        const response: AIResponse = {
+          agentId: 'orchestrator',
+          agentName: 'Orchestrator',
+          cluster: 'strategy',
+          content: `⚠️ ยังไม่สามารถเริ่มงาน "${agent.name}" ได้ เนื่องจากขาดข้อมูลจาก: ${missing}\nกรุณาสลับไปใช้ Ranger ที่เกี่ยวข้องก่อนค่ะ`,
+          rawOutput: 'Dependency check failed',
+          factCheckResult: { valid: false, violations: [missing], warnings: [], recommendations: [`Run ${missing} first`] },
+          confidence: 0,
+          timestamp: new Date().toISOString()
+        };
+        return response;
+      }
     }
 
     // Fetch database context
@@ -193,7 +208,7 @@ class AIService {
       agentId: agent.id,
       agentName: agent.name,
       cluster: agent.cluster,
-      content: this.formatResponse(agentResponse, legacyFactCheck),
+      content: this.formatResponse(agentResponse, legacyFactCheck) + workflowAdvisory,
       rawOutput: agentResponse,
       factCheckResult: legacyFactCheck,
       confidence: routingResult.confidence,
@@ -249,27 +264,14 @@ class AIService {
     try {
       return await this.callClaudeAPI(agent, userInput, context, dbContext);
     } catch (apiError: any) {
-      console.warn('[AIService] Claude API failed, using legacy fallback:', apiError.message);
-
-      const fallbacks: Record<string, string> = {
-        'market-analyzer': this.generateMarketAnalyzerResponse(userInput, context, dbContext),
-        'positioning-strategist': this.generatePositioningStrategistResponse(userInput, context, dbContext),
-        'customer-insight-specialist': this.generateCustomerInsightResponse(userInput, context, dbContext),
-        'visual-strategist': this.generateVisualStrategistResponse(userInput, context, dbContext),
-        'brand-voice-architect': this.generateBrandVoiceResponse(userInput, context, dbContext),
-        'narrative-designer': this.generateNarrativeDesignerResponse(userInput, context, dbContext),
-        'content-creator': this.generateContentCreatorResponse(userInput, context, dbContext),
-        'campaign-planner': this.generateCampaignResponse(userInput, context, dbContext),
-        'analytics-master': this.generateAnalyticsMasterResponse(userInput, context, dbContext)
-      };
-
-      const text = fallbacks[agent.id] || `ขยายความ: ${userInput} (โหมดจำลอง)`;
-      return `[System Note: ระบบใช้โหมดจำลองเนื่องจาก API ขัดข้อง]\n\n${text}`;
+      console.warn('[AIService] Claude API failed, using fallback:', apiError.message);
+      const text = this.generateFallbackResponse(agent.id, userInput, context, dbContext);
+      return `[System Note: ระบบใช้โหมดออฟไลน์ กรุณาตรวจสอบ API Key]\n\n${text}`;
     }
   }
 
   /**
-   * Actual API Call to Claude
+   * Actual API Call to Claude — includes conversation history for multi-turn context
    */
   private async callClaudeAPI(
     agent: Agent,
@@ -280,9 +282,26 @@ class AIService {
     const model = (import.meta as any).env?.VITE_CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
     const contextMsg = this.buildContextMessage(agent, context, dbContext);
 
-    const messages = [
-      { role: 'user', content: `${contextMsg}\n\nUser Request: ${userInput}` }
-    ];
+    // Get per-agent conversation history (last 10 turns max)
+    const agentHistory = this.chatHistories.get(agent.id) || [];
+    const recentHistory = agentHistory.slice(-10);
+
+    // Build messages array: prior turns + new user message
+    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+
+    // First message includes brand context to ground the conversation
+    if (recentHistory.length === 0) {
+      messages.push({ role: 'user', content: `${contextMsg}\n\n---\nคำถาม: ${userInput}` });
+    } else {
+      // On subsequent messages, inject context only in first message of history
+      const [first, ...rest] = recentHistory;
+      messages.push({
+        role: first.role,
+        content: first.role === 'user' ? `${contextMsg}\n\n---\nคำถาม: ${first.content}` : first.content
+      });
+      messages.push(...rest);
+      messages.push({ role: 'user', content: userInput });
+    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -306,7 +325,13 @@ class AIService {
       }
 
       const data = await response.json() as any;
-      return data.content?.find((b: any) => b.type === 'text')?.text || 'No response';
+      const assistantText = data.content?.find((b: any) => b.type === 'text')?.text || 'ไม่ได้รับคำตอบ';
+
+      // Save to per-agent history for next turn
+      const updatedHistory = [...agentHistory, { role: 'user' as const, content: userInput }, { role: 'assistant' as const, content: assistantText }];
+      this.chatHistories.set(agent.id, updatedHistory.slice(-20)); // keep last 20 messages
+
+      return assistantText;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -351,42 +376,39 @@ class AIService {
     return `${agentId} processed: ${input.substring(0, 50)}...`;
   }
 
-  // --- Fallback Generators ---
+  // --- Fallback Generator (used when API is unavailable) ---
 
-  private generateMarketAnalyzerResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `📊 การวิเคราะห์ตลาดเบื้องต้นสำหรับ ${context.brandNameTh} ในกลุ่ม ${context.industry}...`;
-  }
+  private generateFallbackResponse(agentId: string, input: string, context: MasterContext, dbContext?: any): string {
+    const brand = context.brandNameTh || 'แบรนด์ของคุณ';
+    const industry = context.industry || 'ธุรกิจ';
+    const usps = Array.isArray(context.coreUSP) ? context.coreUSP.join(', ') : (context.coreUSP || 'คุณภาพดี');
+    const audience = context.targetAudience || 'กลุ่มเป้าหมาย';
+    const tone = context.toneOfVoice || 'professional';
+    const mood = context.visualStyle?.moodKeywords?.join(', ') || 'modern';
 
-  private generatePositioningStrategistResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `🎯 กำหนดตำแหน่งแบรนด์ (Positioning) สำหรับ ${context.brandNameTh}...`;
-  }
+    const templates: Record<string, string> = {
+      'market-analyzer': `📊 **การวิเคราะห์ตลาดสำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**สิ่งที่ควรวิเคราะห์:**\n- กลุ่มลูกค้าเป้าหมายใน ${industry} ที่กำลังมองหา: ${usps}\n- คู่แข่งในตลาด ${industry} และ Market Positioning ของพวกเขา\n- ช่องว่างตลาด (Market Gap) ที่ ${brand} สามารถเข้าถึงได้\n\n**ขั้นตอนถัดไป:**\n- ระบุ Top 3 คู่แข่งหลักและจุดแข็ง/จุดอ่อน\n- ทำ SWOT Analysis เทียบกับ USP ของ ${brand}: ${usps}\n- หา Opportunity Zone ที่ยังไม่มีใครครอง\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key เพื่อรับการวิเคราะห์เชิงลึกจริง`,
 
-  private generateCustomerInsightResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `👥 วิเคราะห์ Customer Journey สำหรับ ${context.targetAudience}...`;
-  }
+      'positioning-strategist': `🎯 **Brand Positioning สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**Framework การกำหนดตำแหน่ง:**\n- **Who:** ${audience}\n- **What:** ${usps}\n- **Why Us:** เหตุผลที่เลือก ${brand} แทนคู่แข่ง\n- **How:** วิธีสื่อสารคุณค่าให้ตรงกลุ่ม\n\n**Positioning Statement (ร่าง):**\n"สำหรับ ${audience} ที่ต้องการ [ความต้องการ], ${brand} คือตัวเลือกที่ [${usps}] เพราะ [หลักฐาน]"\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
 
-  private generateVisualStrategistResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `🎨 วางโครงสร้าง Visual Identity ตาม Mood: ${context.visualStyle?.moodKeywords?.join(', ') || 'Professional'}`;
-  }
+      'customer-insight-specialist': `👥 **Customer Journey สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**Persona เบื้องต้น:**\n- **กลุ่มเป้าหมาย:** ${audience}\n- **Pain Points ที่ ${brand} แก้ได้:** ${usps}\n- **Emotion Arc:** Awareness → Interest → Consideration → Purchase → Loyalty\n\n**Customer Journey Stages:**\n1. **Awareness** — พบ ${brand} จากช่องทางไหน?\n2. **Consideration** — เปรียบเทียบอะไรก่อนตัดสินใจ?\n3. **Purchase** — Trigger ที่ทำให้ซื้อ\n4. **Loyalty** — เหตุผลที่กลับมาซ้ำ\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
 
-  private generateBrandVoiceResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `🗣️ วางแนวทาง Voice & Tone: ${context.toneOfVoice}`;
-  }
+      'visual-strategist': `🎨 **Visual Identity สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**Visual DNA:**\n- **Mood Keywords:** ${mood}\n- **Primary Color:** ${context.visualStyle?.primaryColor || '#5E9BEB'}\n- **ธุรกิจ:** ${industry}\n\n**แนวทาง Visual System:**\n- **Typography:** เลือก Font ที่สื่อถึง Mood "${mood}"\n- **Color Palette:** Primary + Secondary + Accent + Neutral\n- **Layout Style:** สอดคล้องกับ Tone "${tone}"\n- **Photography Style:** ภาพที่สื่อถึง ${usps}\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
 
-  private generateNarrativeDesignerResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `📚 การวางโครงเรื่อง (Brand Story) สำหรับ ${context.brandNameTh}`;
-  }
+      'brand-voice-architect': `🗣️ **Brand Voice & Tone สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**Voice Profile:**\n- **Tone:** ${tone}\n- **Mood:** ${mood}\n- **อุตสาหกรรม:** ${industry}\n\n**Tone Matrix:**\n| สถานการณ์ | Tone ที่ใช้ | ตัวอย่างประโยค |\n|-----------|-----------|---------------|\n| โพสต์ทั่วไป | ${tone} | [ประโยคสั้นตรงใจ] |\n| Crisis Response | Formal | [เป็นทางการ, รับผิดชอบ] |\n| Promotion | Enthusiastic | [กระตุ้นความสนใจ] |\n\n**Do's:** ใช้ภาษา${tone}, อ้างอิง USP: ${usps}\n**Don'ts:** หลีกเลี่ยงภาษาที่ขัดกับ Mood: ${mood}\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
 
-  private generateContentCreatorResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `✨ ร่างคอนเทนต์สำหรับกลุ่มเป้าหมาย ${context.targetAudience}`;
-  }
+      'narrative-designer': `📚 **Brand Story สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**Story Architecture (Hero's Journey):**\n1. **ต้นกำเนิด** — ${brand} เริ่มต้นจากปัญหาอะไร?\n2. **ความท้าทาย** — อุปสรรคที่เจอในวงการ ${industry}\n3. **จุดเปลี่ยน** — ${usps} คือคำตอบที่ค้นพบ\n4. **พลัง** — คุณค่าที่มอบให้ ${audience}\n5. **วิสัยทัศน์** — อนาคตที่ ${brand} กำลังสร้าง\n\n**Core Message:**\n"${brand} ช่วย ${audience} [แก้ปัญหา] ด้วย ${usps}"\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
 
-  private generateCampaignResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `📅 วางแผนแคมเปญ 30 วัน สำหรับ ${context.industry}`;
-  }
+      'content-creator': `✨ **Content Strategy สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**ตัวอย่าง Caption (ร่าง):**\n\n**Hook:** [จุดดึงดูด — ปัญหา/คำถาม/คำพูดที่โดนใจ ${audience}]\n**Body:** ${usps} ที่ทำให้ ${brand} แตกต่าง\n**CTA:** [Call-to-Action ตรง ${tone}]\n\n**Content Ideas ตาม ${industry}:**\n- Behind the Scenes: กระบวนการที่สะท้อน ${usps}\n- Testimonial: ประสบการณ์จริงของ ${audience}\n- Educational: ความรู้ที่เกี่ยวข้องกับ ${industry}\n- Trend: เชื่อมโยง Brand กับ Trend ปัจจุบัน\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
 
-  private generateAnalyticsMasterResponse(input: string, context: MasterContext, dbContext?: any): string {
-    return `📊 ตัวชี้วัดประสิทธิภาพ (KPIs) สำหรับ ${context.brandNameTh}`;
+      'campaign-planner': `📅 **Campaign Planning สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**โครงสร้าง Campaign 30 วัน:**\n\n**สัปดาห์ 1-2 (Awareness):** แนะนำ ${brand} และ ${usps}\n**สัปดาห์ 3 (Engagement):** เนื้อหาเจาะ ${audience} + Interactive\n**สัปดาห์ 4 (Conversion):** Offer + CTA เพื่อ Action\n\n**KPI เป้าหมาย:**\n- Reach: เข้าถึง ${audience}\n- Engagement Rate: ≥ 3%\n- Conversion: ตาม Business Goal\n\n**Channels ที่แนะนำสำหรับ ${industry}:**\nInstagram, Facebook, TikTok, LINE OA\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
+
+      'automation-specialist': `⚙️ **Automation Workflow สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**Trigger-Condition-Action (TCA) Map:**\n\n| Trigger | Condition | Action |\n|---------|-----------|--------|\n| สมัครรับข่าวสาร | New Subscriber | ส่ง Welcome Email |\n| ไม่ได้ซื้อ 30 วัน | Inactive Customer | ส่ง Re-engagement |\n| ซื้อสินค้า | Post-Purchase | ส่ง Thank You + Upsell |\n\n**Stack ที่แนะนำสำหรับ ${industry}:**\n- CRM: HubSpot / Zoho\n- Email: Mailchimp / Klaviyo\n- Chat: LINE OA / Manychat\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
+
+      'analytics-master': `📊 **KPI Dashboard สำหรับ ${brand}**\n\n**คำถามของคุณ:** ${input}\n\n**KPI Hierarchy สำหรับ ${industry}:**\n\n**Tier 1 (Business):** Revenue, Customer Acquisition Cost, LTV\n**Tier 2 (Marketing):** Reach, CPM, CTR, Conversion Rate\n**Tier 3 (Content):** Engagement Rate, Saves, Shares\n\n**วิธีวัดความสำเร็จของ ${brand}:**\n- USP "${usps}" → วัดผ่าน Customer Satisfaction Score\n- กลุ่ม ${audience} → วัด Retention Rate\n- ${industry} Benchmark → เปรียบเทียบ Industry Average\n\n**Dashboard ที่แนะนำ:** Google Analytics 4 + Meta Business Suite\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key`,
+    };
+
+    return templates[agentId] || `💬 ได้รับคำถาม: "${input}"\n\nแบรนด์: ${brand} | อุตสาหกรรม: ${industry}\nUSP: ${usps}\n\n⚠️ ระบบออฟไลน์ กรุณาตรวจสอบ API Key เพื่อรับคำตอบจริงจาก Claude AI`;
   }
 
   private formatResponse(response: string, factCheck: FactCheckResult): string {
@@ -398,7 +420,13 @@ class AIService {
   }
 
   getConversationHistory(): AIResponse[] { return this.conversationHistory; }
-  clearHistory(): void { this.conversationHistory = []; }
+  clearHistory(): void {
+    this.conversationHistory = [];
+    this.chatHistories.clear();
+  }
+  clearAgentHistory(agentId: string): void {
+    this.chatHistories.delete(agentId);
+  }
 }
 
 export const aiService = new AIService();
